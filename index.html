@@ -1950,6 +1950,8 @@ document.getElementById('upload-input').addEventListener('change',function(ev){
   rd.onload=function(e){
     try{
       const raw=JSON.parse(e.target.result);
+      // Destroy existing Chart.js instances before reset
+      Object.values(S.charts).forEach(ch=>{try{ch&&ch.destroy&&ch.destroy();}catch(e){}});
       // Reset state
       Object.assign(S,{entries:[],projectMeta:new Map(),monthMap:new Map(),minDate:'9999',maxDate:'0000',totalHours:0,billableHours:0,charts:{}});
       Object.assign(S,processData(raw));
