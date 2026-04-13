@@ -277,23 +277,31 @@
    * @returns {{ table: Element, headers: Array<{text:string, el:Element}> }|null}
    */
   function findTimesheetTable() {
-    // Strategy 1: element with a class name containing "timesheet"
+    // Strategy 1: find a <table> that contains BOTH date headers AND project codes.
+    // Using the same <table> guarantees that header cellIndex === data cell cellIndex.
+    for (const table of document.querySelectorAll('table')) {
+      const hdrs = collectDateHeaders(table);
+      if (hdrs.length < 5) continue;
+      // Verify this table also has project-code rows
+      let hasData = false;
+      for (const td of table.querySelectorAll('td,th')) {
+        const t = getText(td).trim();
+        if (PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t)) { hasData = true; break; }
+      }
+      if (hasData) return { table, headers: hdrs };
+    }
+
+    // Strategy 2: any container with a "timesheet" class
     const tsEl = document.querySelector('[class*="timesheet"],[class*="Timesheet"]');
     if (tsEl) {
       const hdrs = collectDateHeaders(tsEl);
       if (hdrs.length > 0) return { table: tsEl, headers: hdrs };
     }
 
-    // Strategy 2: any <table> whose <th> cells match the date pattern
-    for (const table of document.querySelectorAll('table')) {
-      const hdrs = collectDateHeaders(table);
-      if (hdrs.length > 0) return { table, headers: hdrs };
-    }
-
-    // Strategy 3: any div/section whose child text nodes match the date pattern
+    // Strategy 3: any div/section with date headers
     for (const div of document.querySelectorAll('div,section,article')) {
       const hdrs = collectDateHeaders(div);
-      if (hdrs.length >= 5) return { table: div, headers: hdrs }; // reasonable minimum
+      if (hdrs.length >= 5) return { table: div, headers: hdrs };
     }
 
     return null;
@@ -329,13 +337,15 @@
     if (bestTr && bestCount >= 5) {
       const cells = Array.from(bestTr.querySelectorAll('th,td'));
       const headers = [];
-      for (let i = 0; i < cells.length; i++) {
-        const t = getText(cells[i]).replace(/\s+/g, ' ').trim();
+      for (const cell of cells) {
+        const t = getText(cell).replace(/\s+/g, ' ').trim();
         if (!DATE_HEADER_RE.test(t)) continue;
         const normalized = t.replace(/^([A-Z][a-z]{2})(\d)/, '$1 $2');
-        if (!seenTexts.has(normalized)) {          // deduplicate: keep first (= Regular col)
+        if (!seenTexts.has(normalized)) {
           seenTexts.add(normalized);
-          headers.push({ text: normalized, el: cells[i], colIdx: i });
+          // cellIndex is the browser-native column position — works even with colspan
+          const ci = (cell.cellIndex !== undefined && cell.cellIndex >= 0) ? cell.cellIndex : null;
+          headers.push({ text: normalized, el: cell, cellIndex: ci });
         }
       }
       if (headers.length >= 5) return headers;
@@ -473,52 +483,35 @@
     const phaseName   = texts[projectIdx + 4] || '';
     const task        = texts[projectIdx + 5] || '';
 
-    // Build dailyHours by matching cells to header positions.
+    // Build dailyHours: match data cells to date headers by browser-native cellIndex.
+    // Both header cells and data cells from the same <table> share the same cellIndex
+    // values regardless of which <tr> they're in — no offset math needed.
     const dailyHours = {};
-    const useColIdx = headers.length > 0 && headers[0].colIdx !== undefined;
+    const hasCellIndex = headers.length > 0 && headers[0].cellIndex !== null;
 
-    if (useColIdx) {
-      // Approach A (preferred): column-index lookup with offset correction.
-      //
-      // VP's date-header <tr> may contain ONLY date cells (colIdx starts at 0),
-      // while data rows have N metadata columns before the day columns.
-      // We compute the offset so that: actualDataCol = hdr.colIdx + colOffset
-      //   where colOffset = (projectIdx + 6) - headers[0].colIdx
-      //
-      // If the header row also starts with metadata columns (colIdx[0] > 0),
-      // the offset is 0 and we use colIdx directly.
-      const headerDateStart = headers[0].colIdx;
-      const dataDateStart   = projectIdx + 6;
-      const colOffset       = dataDateStart - headerDateStart;
-
-      for (const hdr of headers) {
-        const actualCol = hdr.colIdx + colOffset;
-        if (actualCol < 0 || actualCol >= cells.length) continue;
-        const cell = cells[actualCol];
-        // Prefer <input> value (VP editable cells) over text content
+    if (hasCellIndex) {
+      // Build lookup: cellIndex → header text
+      const hdrByCI = new Map(headers.filter(h => h.cellIndex !== null).map(h => [h.cellIndex, h.text]));
+      for (const cell of cells) {
+        const ci = cell.cellIndex;
+        if (ci === undefined || ci === null || ci < 0) continue;
+        const hdrText = hdrByCI.get(ci);
+        if (!hdrText) continue;
         const input = cell.querySelector && cell.querySelector('input');
-        const raw = input ? input.value : getText(cell);
-        const hrs = parseFloat(raw.replace(/,/g, '').trim());
-        if (!isNaN(hrs) && hrs >= 0) dailyHours[hdr.text] = hrs;
-      }
-    } else {
-      // Approach B: positional alignment (fallback when colIdx unavailable)
-      const firstHourIdx = projectIdx + 6;
-      for (let i = 0; i < headers.length; i++) {
-        const cellIdx = firstHourIdx + i;
-        if (cellIdx >= cells.length) break;
-        const input = cells[cellIdx].querySelector && cells[cellIdx].querySelector('input');
-        const raw = input ? input.value : getText(cells[cellIdx]);
-        const hrs = parseFloat(raw.replace(/,/g, '').trim());
-        if (!isNaN(hrs) && hrs >= 0) dailyHours[headers[i].text] = hrs;
+        const raw = (input ? input.value : getText(cell)).replace(/,/g, '').trim();
+        const hrs = parseFloat(raw);
+        if (!isNaN(hrs) && hrs >= 0) dailyHours[hdrText] = hrs;
       }
     }
 
-    // Approach C: if still empty, scan all cells past projectIdx for numerics
+    // Fallback: positional scan from projectIdx+6 (used when cellIndex unavailable)
     if (Object.keys(dailyHours).length === 0) {
+      const firstHourIdx = projectIdx + 6;
       let hIdx = 0;
-      for (let i = projectIdx + 1; i < cells.length && hIdx < headers.length; i++) {
-        const raw = getText(cells[i]).replace(/,/g, '').trim();
+      for (let i = firstHourIdx; i < cells.length && hIdx < headers.length; i++) {
+        const cell = cells[i];
+        const input = cell.querySelector && cell.querySelector('input');
+        const raw = (input ? input.value : getText(cell)).replace(/,/g, '').trim();
         const hrs = parseFloat(raw);
         if (!isNaN(hrs) && hrs >= 0 && hrs <= 24) {
           dailyHours[headers[hIdx].text] = hrs;
