@@ -478,12 +478,23 @@
     const useColIdx = headers.length > 0 && headers[0].colIdx !== undefined;
 
     if (useColIdx) {
-      // Approach A (preferred): direct column-index lookup.
-      // headers[i].colIdx is the cell index in the header row; data rows share
-      // the same column layout, so cells[colIdx] is the correct hour cell.
+      // Approach A (preferred): column-index lookup with offset correction.
+      //
+      // VP's date-header <tr> may contain ONLY date cells (colIdx starts at 0),
+      // while data rows have N metadata columns before the day columns.
+      // We compute the offset so that: actualDataCol = hdr.colIdx + colOffset
+      //   where colOffset = (projectIdx + 6) - headers[0].colIdx
+      //
+      // If the header row also starts with metadata columns (colIdx[0] > 0),
+      // the offset is 0 and we use colIdx directly.
+      const headerDateStart = headers[0].colIdx;
+      const dataDateStart   = projectIdx + 6;
+      const colOffset       = dataDateStart - headerDateStart;
+
       for (const hdr of headers) {
-        if (hdr.colIdx >= cells.length) continue;
-        const cell = cells[hdr.colIdx];
+        const actualCol = hdr.colIdx + colOffset;
+        if (actualCol < 0 || actualCol >= cells.length) continue;
+        const cell = cells[actualCol];
         // Prefer <input> value (VP editable cells) over text content
         const input = cell.querySelector && cell.querySelector('input');
         const raw = input ? input.value : getText(cell);
