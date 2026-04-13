@@ -300,20 +300,57 @@
   }
 
   /**
-   * Collect all date-header elements within `root` that match DATE_HEADER_RE.
+   * Collect date-header elements within `root` that match DATE_HEADER_RE.
+   *
+   * Strategy A (preferred): find the <tr> with the most date-matching cells.
+   *   Records each header's column index (colIdx) so buildRowFromCells can do
+   *   direct column lookup instead of fragile positional math. Deduplicates by
+   *   date text so VP's 4-sub-column-per-day layout collapses to one entry per
+   *   day (keeping the first / "Regular" column).
+   *
+   * Strategy B (fallback): original element scan, now also deduplicated.
+   *
    * @param {Element} root
-   * @returns {Array<{text: string, el: Element}>}
+   * @returns {Array<{text: string, el: Element, colIdx?: number}>}
    */
   function collectDateHeaders(root) {
+    const seenTexts = new Set();
+
+    // ── Strategy A: find the <tr> with the most date cells ───────────────────
+    let bestTr = null, bestCount = 0;
+    for (const tr of root.querySelectorAll('tr')) {
+      let count = 0;
+      for (const c of tr.querySelectorAll('th,td')) {
+        if (DATE_HEADER_RE.test(getText(c).replace(/\s+/g, ' ').trim())) count++;
+      }
+      if (count > bestCount) { bestCount = count; bestTr = tr; }
+    }
+
+    if (bestTr && bestCount >= 5) {
+      const cells = Array.from(bestTr.querySelectorAll('th,td'));
+      const headers = [];
+      for (let i = 0; i < cells.length; i++) {
+        const t = getText(cells[i]).replace(/\s+/g, ' ').trim();
+        if (!DATE_HEADER_RE.test(t)) continue;
+        const normalized = t.replace(/^([A-Z][a-z]{2})(\d)/, '$1 $2');
+        if (!seenTexts.has(normalized)) {          // deduplicate: keep first (= Regular col)
+          seenTexts.add(normalized);
+          headers.push({ text: normalized, el: cells[i], colIdx: i });
+        }
+      }
+      if (headers.length >= 5) return headers;
+    }
+
+    // ── Strategy B: fallback element scan (deduplicated) ─────────────────────
     const headers = [];
-    // Check th, td, div, span children
     const candidates = root.querySelectorAll('th,td,div,span,li,button');
     for (const el of candidates) {
-      if (el.children.length > 2) continue; // skip elements that contain other nodes
+      if (el.children.length > 2) continue;
       const t = getText(el).replace(/\s+/g, ' ').trim();
-      if (DATE_HEADER_RE.test(t)) {
-        // Normalize: "Mon1/5" → "Mon 1/5"
-        const normalized = t.replace(/^([A-Z][a-z]{2})(\d)/, '$1 $2');
+      if (!DATE_HEADER_RE.test(t)) continue;
+      const normalized = t.replace(/^([A-Z][a-z]{2})(\d)/, '$1 $2');
+      if (!seenTexts.has(normalized)) {
+        seenTexts.add(normalized);
         headers.push({ text: normalized, el });
       }
     }
@@ -436,26 +473,37 @@
     const phaseName   = texts[projectIdx + 4] || '';
     const task        = texts[projectIdx + 5] || '';
 
-    // Build dailyHours by matching cells to header positions
-    // We do this by looking at cells that contain numeric hour values (0–24)
-    // after the metadata columns, positionally aligned with date headers
+    // Build dailyHours by matching cells to header positions.
     const dailyHours = {};
+    const useColIdx = headers.length > 0 && headers[0].colIdx !== undefined;
 
-    // Approach A: positional alignment
-    // The first date column follows the metadata block; typically projectIdx + 6
-    const firstHourIdx = projectIdx + 6;
-    for (let i = 0; i < headers.length; i++) {
-      const cellIdx = firstHourIdx + i;
-      if (cellIdx >= cells.length) break;
-      const raw = getText(cells[cellIdx]).replace(/,/g, '').trim();
-      const hrs = parseFloat(raw);
-      if (!isNaN(hrs) && hrs >= 0) {
-        dailyHours[headers[i].text] = hrs;
+    if (useColIdx) {
+      // Approach A (preferred): direct column-index lookup.
+      // headers[i].colIdx is the cell index in the header row; data rows share
+      // the same column layout, so cells[colIdx] is the correct hour cell.
+      for (const hdr of headers) {
+        if (hdr.colIdx >= cells.length) continue;
+        const cell = cells[hdr.colIdx];
+        // Prefer <input> value (VP editable cells) over text content
+        const input = cell.querySelector && cell.querySelector('input');
+        const raw = input ? input.value : getText(cell);
+        const hrs = parseFloat(raw.replace(/,/g, '').trim());
+        if (!isNaN(hrs) && hrs >= 0) dailyHours[hdr.text] = hrs;
+      }
+    } else {
+      // Approach B: positional alignment (fallback when colIdx unavailable)
+      const firstHourIdx = projectIdx + 6;
+      for (let i = 0; i < headers.length; i++) {
+        const cellIdx = firstHourIdx + i;
+        if (cellIdx >= cells.length) break;
+        const input = cells[cellIdx].querySelector && cells[cellIdx].querySelector('input');
+        const raw = input ? input.value : getText(cells[cellIdx]);
+        const hrs = parseFloat(raw.replace(/,/g, '').trim());
+        if (!isNaN(hrs) && hrs >= 0) dailyHours[headers[i].text] = hrs;
       }
     }
 
-    // Approach B: if positional gave nothing, scan all cells for numeric values
-    // in the order they appear and assign them to headers in sequence
+    // Approach C: if still empty, scan all cells past projectIdx for numerics
     if (Object.keys(dailyHours).length === 0) {
       let hIdx = 0;
       for (let i = projectIdx + 1; i < cells.length && hIdx < headers.length; i++) {
@@ -464,19 +512,6 @@
         if (!isNaN(hrs) && hrs >= 0 && hrs <= 24) {
           dailyHours[headers[hIdx].text] = hrs;
           hIdx++;
-        }
-      }
-    }
-
-    // Also check <input> values within cells (VP sometimes uses editable inputs)
-    for (let i = 0; i < headers.length; i++) {
-      const cellIdx = firstHourIdx + i;
-      if (cellIdx >= cells.length) continue;
-      const input = cells[cellIdx].querySelector && cells[cellIdx].querySelector('input');
-      if (input) {
-        const hrs = parseFloat(input.value);
-        if (!isNaN(hrs) && hrs >= 0) {
-          dailyHours[headers[i].text] = hrs; // override with input value
         }
       }
     }
