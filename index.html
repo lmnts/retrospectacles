@@ -305,7 +305,7 @@ body{
   <div class="drop-zone" id="dz">
     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#24837b" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg>
     <h2>Timesheet Explorer</h2>
-    <p>Drop <code>alex_woodhouse_timesheets.json</code> here<br>or click to browse</p>
+    <p>Drop <code>retrospectacles-data.json</code> here<br>or click to browse</p>
     <button class="btn" onclick="document.getElementById('fi').click()">Load JSON file</button>
     <input type="file" id="fi" accept=".json" style="display:none">
   </div>
@@ -318,7 +318,7 @@ body{
     <h1 style="display:flex;align-items:center;gap:9px;margin:0"><svg width="38" height="16" viewBox="0 0 38 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex-shrink:0"><line x1="1" y1="4.5" x2="5.5" y2="8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="11" cy="8" r="6.2" fill="#d4504a" fill-opacity="0.38" stroke="currentColor" stroke-width="1.4"/><path d="M17.2 8.3 Q19 5.8 20.8 8.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="27" cy="8" r="6.2" fill="#d4504a" fill-opacity="0.38" stroke="currentColor" stroke-width="1.4"/><line x1="37" y1="4.5" x2="32.5" y2="8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Retrospectacles</h1>
     <span id="hdr-sub" style="font-size:10px;color:var(--b5);letter-spacing:.02em;padding-left:2px">a look back at all hours</span>
   </div>
-    <button class="btn ghost sm" id="upload-btn" title="Load your own Vantagepoint export" style="font-size:10px;padding:3px 9px;opacity:.7" onclick="document.getElementById('upload-input').click()">&#x2191; Load data</button>
+    <button class="btn ghost sm" id="upload-btn" title="Load your own Vantagepoint export" style="font-size:11px;padding:5px 12px;" onclick="document.getElementById('upload-input').click()">&#x2191; Load data</button>
     <input type="file" id="upload-input" accept=".json" style="display:none">
     <span class="rtag" id="hdr-range">—</span>
     <div class="sp"></div>
