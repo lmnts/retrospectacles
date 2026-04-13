@@ -403,12 +403,28 @@
   function buildRowFromCells(cells, headers) {
     const texts = cells.map(getText);
 
-    // Must find at least one project-code-looking cell
+    // Must find at least one project-code-looking cell.
+    // Priority 1: standard numeric/alpha project codes (e.g. 22059-01, 26TEC-00)
+    // Priority 2: short non-numeric overhead codes (PTO, Reg Holiday, Huddle, etc.)
     let projectIdx = -1;
     for (let i = 0; i < texts.length; i++) {
       if (PROJECT_CODE_RE.test(texts[i]) || PROJECT_CODE_ALPHA_RE.test(texts[i])) {
         projectIdx = i;
         break;
+      }
+    }
+    // Fallback: accept short plain-text charge labels in the first 3 cells
+    // that look like overhead codes (non-empty, no slash/digits-only, ≤40 chars)
+    if (projectIdx === -1) {
+      for (let i = 0; i < Math.min(3, texts.length); i++) {
+        const t = texts[i];
+        if (t && t.length >= 2 && t.length <= 40
+            && !/^\d+\.?\d*$/.test(t)          // not a pure number
+            && !/\d+\/\d+/.test(t)              // not a date fragment
+            && !/^(total|hours|project|code|description|client|phase|task|type|period|week|pay)/i.test(t)) {
+          projectIdx = i;
+          break;
+        }
       }
     }
     if (projectIdx === -1) return null;
@@ -779,7 +795,7 @@
     const tableResult = await waitFor(() => {
       const ts = findTimesheetTable();
       return (ts && ts.headers.length > 0) ? ts : null;
-    }, 4000, 250);
+    }, 8000, 250);
 
     if (!tableResult) {
       return null; // Caller handles the failure
@@ -911,7 +927,7 @@
       navigateToPeriod(employeeCode, currentEndDate);
 
       // Give the SPA router a moment to start rendering
-      await sleep(400);
+      await sleep(800);
 
       // Scrape
       let result = null;
