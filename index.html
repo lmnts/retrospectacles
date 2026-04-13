@@ -1120,6 +1120,7 @@ function buildAnnual(){
   const years=Object.keys(yB).sort();
   const ctx=document.getElementById('c-annual');
   if(S.charts.annual){try{S.charts.annual.destroy();}catch(e){}}
+  try{const _ec=Chart.getChart(ctx);if(_ec)_ec.destroy();}catch(e){}
   S.charts.annual=new Chart(ctx,{type:'bar',data:{labels:years,datasets:[
     {label:'Billable',data:years.map(y=>Math.round(yB[y]||0)),backgroundColor:C.cyan+'cc',stack:'s'},
     {label:'Overhead',data:years.map(y=>Math.round(yO[y]||0)),backgroundColor:C.b3+'cc',stack:'s'},
@@ -1179,6 +1180,7 @@ function buildArc(){
   });
   const el=document.getElementById('c-arc');if(!el)return;
   if(S.charts.arc){try{S.charts.arc.destroy();}catch(ex){}}
+  try{const _ec=Chart.getChart(el);if(_ec)_ec.destroy();}catch(e){}
   S.charts.arc=new Chart(el,{
     data:{labels:years,datasets:[
       {type:'bar',label:'Billable',data:years.map(y=>Math.round(yData[y].bill)),backgroundColor:C.cyan+'cc',stack:'s',yAxisID:'y',order:2},
@@ -1459,6 +1461,7 @@ function buildMix(){
   canvas._mData=mData;
   canvas._type=type;
   buildMixLegend(topKeys,'mix-legend');
+  try{const _ec=Chart.getChart(canvas);if(_ec)_ec.destroy();}catch(e){}
   S.charts.monthly=new Chart(canvas,{
     type:type==='line'?'line':'bar',
     data:{labels:months,datasets},
