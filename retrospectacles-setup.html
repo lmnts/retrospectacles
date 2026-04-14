@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install Timesheet Extractor</title>
+<style>
+  :root{--bg:#100f0f;--paper:#fffcf0;--b0:#1c1b1a;--b1:#282726;--b2:#403e3c;--b3:#575653;--b5:#9f9d96;--b6:#b7b5ac;--b7:#cecdc3;--b8:#e6e4d9;--cyan:#3aa99f;--red:#d14d41;--yellow:#d0a215}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--b7);font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:48px 20px}
+  .card{background:var(--b0);border:1px solid var(--b1);border-radius:14px;padding:36px 40px;max-width:560px;width:100%}
+  h1{font-size:22px;font-weight:700;color:var(--paper);letter-spacing:-.01em;margin-bottom:6px;display:flex;align-items:center;gap:10px}
+  .sub{font-size:12px;color:var(--b5);margin-bottom:32px;font-style:italic}
+  h2{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--b5);margin:28px 0 10px}
+  h2:first-of-type{margin-top:0}
+  p{color:var(--b6);font-size:13px;margin-bottom:12px;line-height:1.65}
+  .step{display:flex;gap:14px;margin-bottom:14px;align-items:flex-start}
+  .step-num{width:24px;height:24px;border-radius:50%;background:var(--cyan);color:var(--bg);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+  .step p{margin:0;color:var(--b7);font-size:13px}
+  .bm-wrap{background:var(--b1);border:2px dashed var(--b3);border-radius:10px;padding:20px;text-align:center;margin:16px 0}
+  .bm-wrap p{font-size:12px;color:var(--b5);margin-bottom:14px}
+  a.bookmarklet{display:inline-block;background:var(--cyan);color:var(--bg);font-weight:700;font-size:13px;padding:10px 22px;border-radius:8px;text-decoration:none;border:none;cursor:grab;transition:opacity .15s}
+  a.bookmarklet:hover{opacity:.85}
+  a.bookmarklet:active{cursor:grabbing}
+  .or{color:var(--b3);font-size:11px;margin:8px 0}
+  details{margin-top:12px}
+  summary{cursor:pointer;font-size:12px;color:var(--cyan);user-select:none;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:'▶ ';font-size:9px}
+  details[open] summary::before{content:'▼ '}
+  .code-wrap{background:var(--bg);border:1px solid var(--b2);border-radius:7px;padding:12px 14px;margin-top:10px;overflow-x:auto}
+  code{font:12px/1.5 'Menlo','Consolas',monospace;color:var(--b7);white-space:pre;display:block;word-break:break-all;white-space:pre-wrap}
+  .divider{border:none;border-top:1px solid var(--b1);margin:28px 0}
+  .badge{display:inline-block;background:var(--b2);color:var(--b6);font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;margin-left:6px;vertical-align:middle}
+  .note{background:var(--b1);border-left:3px solid var(--cyan);border-radius:0 6px 6px 0;padding:10px 14px;margin:12px 0}
+  .note p{color:var(--b6);font-size:12px;margin:0}
+  .glasses{opacity:.8}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>
+    <svg class="glasses" width="32" height="14" viewBox="0 0 38 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <line x1="1" y1="4.5" x2="5.5" y2="8.5" stroke="#fffcf0" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="11" cy="8" r="6.2" fill="#d4504a" fill-opacity="0.4" stroke="#fffcf0" stroke-width="1.4"/>
+      <path d="M17.2 8.3 Q19 5.8 20.8 8.3" fill="none" stroke="#fffcf0" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="27" cy="8" r="6.2" fill="#d4504a" fill-opacity="0.4" stroke="#fffcf0" stroke-width="1.4"/>
+      <line x1="37" y1="4.5" x2="32.5" y2="8.5" stroke="#fffcf0" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    Retrospectacles
+  </h1>
+  <p class="sub">Timesheet extractor — install once, use any time</p>
+
+  <div class="note">
+    <p>🔒 No AI required. No account needed. Runs entirely in your browser. Your data never leaves your machine.</p>
+  </div>
+
+  <hr class="divider">
+
+  <h2>Step 1 — Install the bookmarklet</h2>
+
+  <div class="bm-wrap">
+    <p>Drag this button to your browser's bookmarks bar ↓</p>
+    <!-- The href is replaced at build/deploy time with the actual hosted URL -->
+    <a class="bookmarklet" href="javascript:(function(){if(document.getElementById('_rxt'))return;var s=document.createElement('script');s.id='_rxt';s.src='https://lmnts.github.io/retrospectacles/extract.js?_='+Date.now();document.head.appendChild(s);})();">⬇ Extract Timesheets</a>
+    <p class="or">— or —</p>
+    <p style="font-size:12px;color:var(--b5)">Right-click → Copy link address, then add a new bookmark and paste into the URL field</p>
+  </div>
+
+  <details>
+    <summary>Show raw bookmarklet URL (for manual install)</summary>
+    <div class="code-wrap">
+      <code id="bm-code">javascript:(function(){if(document.getElementById('_rxt'))return;var s=document.createElement('script');s.id='_rxt';s.src='https://lmnts.github.io/retrospectacles/extract.js?_='+Date.now();document.head.appendChild(s);})();</code>
+    </div>
+  </details>
+
+  <hr class="divider">
+
+  <h2>Step 2 — Extract your timesheets</h2>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <p>Log into <strong>Vantagepoint</strong> and open <strong>Timekeeper</strong>. Any pay period will do — the extractor starts from your most recent and works backward automatically.</p>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <p>Click <strong>"Extract Timesheets"</strong> in your bookmarks bar. A progress panel will appear in the top-right corner. Wait for it to finish (typically 5–15 minutes for a full career history).</p>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <p>When complete, your browser downloads <code style="display:inline;font-size:12px;background:var(--b2);padding:1px 5px;border-radius:3px">retrospectacles-data.json</code> automatically. You can also click <strong>Download JSON</strong> in the panel at any time.</p>
+  </div>
+
+  <hr class="divider">
+
+  <h2>Step 3 — View your dashboard</h2>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <p>Open <strong>Retrospectacles.html</strong> in your browser (double-click the file).</p>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <p>Click <strong>↑ Load data</strong> and select your <code style="display:inline;font-size:12px;background:var(--b2);padding:1px 5px;border-radius:3px">retrospectacles-data.json</code> file.</p>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <p>Explore your career history across all chart tabs.</p>
+  </div>
+
+  <hr class="divider">
+
+  <h2>Troubleshooting</h2>
+  <p>If the panel appears but shows <em>"Could not find timesheet table"</em>, the extractor will show a diagnostic report. Copy that and share it — the selectors may need a one-time update for your firm's Vantagepoint version.</p>
+  <p>You can stop the extraction at any time and download a partial dataset — it will still load into Retrospectacles showing whatever history was collected.</p>
+
+</div>
+
+<script>
+  // Replace https://lmnts.github.io/retrospectacles/extract.js with the real hosted URL of extract.js
+  // This placeholder gets substituted at deploy time
+  const EXTRACT_URL = 'https://lmnts.github.io/retrospectacles/extract.js';
+  const bm = "javascript:(function(){if(document.getElementById('_rxt'))return;var s=document.createElement('script');s.id='_rxt';s.src='" + EXTRACT_URL + "?_='+Date.now();document.head.appendChild(s);})();";
+  document.querySelector('a.bookmarklet').href = bm;
+  document.getElementById('bm-code').textContent = bm;
+</script>
+</body>
+</html>
