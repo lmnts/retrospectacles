@@ -313,28 +313,25 @@
     }
     if (headers.length === 0) return null;
 
-    // 2. Meta rows — every <tr> that contains a td[name="WBS1"] cell
-    const metaRows = Array.from(document.querySelectorAll('td[name="WBS1"]'))
+    // 2. Meta rows — every <tr> that contains a [name="WBS1"] cell (td or th)
+    const metaRows = Array.from(document.querySelectorAll('[name="WBS1"]'))
       .map(cell => cell.closest('tr'))
       .filter(Boolean);
 
-    // 3. Hour rows — every <tr> that contains a td[name^="T_day"] cell
-    //    De-duplicate by TR identity (a row may have many T_day cells)
+    // 3. Hour rows — every <tr> that contains a [name^="T_day"] cell (td or th)
+    //    De-duplicate by TR identity (each row has many T_day cells)
     const hourRowSet = new Set();
-    for (const cell of document.querySelectorAll('td[name^="T_day"]')) {
+    for (const cell of document.querySelectorAll('[name^="T_day"]')) {
       const tr = cell.closest('tr');
       if (tr) hourRowSet.add(tr);
     }
     const hourRows = Array.from(hourRowSet);
 
-    // Not ready — tables haven't rendered yet
+    // Not ready yet — wait for both sets of rows to appear
     if (metaRows.length === 0 || hourRows.length === 0) return null;
-    if (metaRows.length !== hourRows.length) {
-      console.log(`[TS] not ready: metaRows=${metaRows.length} hourRows=${hourRows.length} — retrying`);
-      return null;
-    }
 
-    console.log(`[TS] ready: ${metaRows.length} charge-code rows, ${headers.length} date headers`);
+    // Pair as many rows as both sides share — totals rows or mismatches are skipped
+    console.log(`[TS] ready: meta=${metaRows.length} hourRows=${hourRows.length} headers=${headers.length}`);
     return { metaRows, hourRows, headers };
   }
 
@@ -501,7 +498,7 @@
   function buildRowFromNamedCells(metaRow, hourDataRow, headers) {
     // ── Read metadata via name= attributes ────────────────────────────────────
     const cellText = name => {
-      const el = metaRow.querySelector(`td[name="${name}"],th[name="${name}"]`);
+      const el = metaRow.querySelector(`[name="${name}"]`);
       return el ? (el.innerText || el.textContent || '').trim() : '';
     };
 
@@ -519,7 +516,7 @@
     // For historical (read-only) periods VP puts the value in cell text.
     // For the current editable period VP may use an <input> inside the cell.
     const dailyHours = {};
-    for (const cell of hourDataRow.querySelectorAll('td[name^="T_day"],th[name^="T_day"]')) {
+    for (const cell of hourDataRow.querySelectorAll('[name^="T_day"]')) {
       const m = (cell.getAttribute('name') || '').match(/^T_day(\d+)$/);
       if (!m) continue;
       const dayIdx = parseInt(m[1], 10) - 1; // 1-indexed → 0-indexed
