@@ -285,71 +285,57 @@
    * @returns {{ metaTable: Element, hourTable: Element, headers: Array }|null}
    */
   /**
-   * Find all three tables that make up VP's timesheet:
+   * Find VP timesheet data by querying for named cells directly — no table
+   * structure assumed.
    *
-   *   hourHeaderTable  — contains the date column headers (TH cells like "Mon 1/5")
-   *   metaTable        — frozen left columns; cells have name=WBS1, name=WBS1Name, etc.
-   *   hourDataTable    — scrollable right columns; cells have name=T_day1..T_dayN
+   * VP explicitly names every cell:
+   *   name="WBS1"        → project code   (one per charge-code row)
+   *   name="WBS1Name"    → project name
+   *   name="ClientName"  → client
+   *   name="WBS2"        → phase
+   *   name="WBS2Name"    → phase name
+   *   name="WBS3"        → task
+   *   name="T_day1"..N  → daily hours (one per calendar day in the period)
    *
-   * The metaTable and hourDataTable are row-parallel: row i of metaTable corresponds
-   * to row i of hourDataTable for the same charge code.
+   * metaRows and hourRows are parallel: metaRows[i] describes the same charge
+   * code as hourRows[i].
    *
-   * Also verifies that hourDataTable cells are actually populated before returning
-   * (Angular renders the header table before the data table, so we must wait for
-   * T_day cells to appear in the DOM before we consider the page ready).
+   * Returns null if the page isn't ready yet (waitFor will retry).
    *
-   * @returns {{ metaTable, hourHeaderTable, hourDataTable, headers }|null}
+   * @returns {{ metaRows, hourRows, headers }|null}
    */
   function findTimesheetTables() {
-    // 1. Hour header table — has a <tr> with ≥5 date-header cells (TH or TD)
-    let hourHeaderTable = null;
+    // 1. Date headers (needed to map T_day index → date label)
     let headers = [];
     for (const table of document.querySelectorAll('table')) {
       const hdrs = collectDateHeaders(table);
-      if (hdrs.length >= 5) { hourHeaderTable = table; headers = hdrs; break; }
+      if (hdrs.length >= 5) { headers = hdrs; break; }
     }
-    if (!hourHeaderTable || headers.length === 0) return null;
+    if (headers.length === 0) return null;
 
-    // 2. Meta table — different table whose TDs have name="WBS1" (VP's project-code cell)
-    let metaTable = null;
-    for (const table of document.querySelectorAll('table')) {
-      if (table === hourHeaderTable) continue;
-      if (table.querySelector('td[name="WBS1"]')) { metaTable = table; break; }
-    }
-    if (!metaTable) {
-      // Fallback: look for project-code text patterns (older VP versions)
-      for (const table of document.querySelectorAll('table')) {
-        if (table === hourHeaderTable) continue;
-        for (const td of table.querySelectorAll('td')) {
-          const t = (td.innerText || td.textContent || '').trim();
-          if (PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t)) {
-            metaTable = table; break;
-          }
-        }
-        if (metaTable) break;
-      }
-    }
-    if (!metaTable) return null;
+    // 2. Meta rows — every <tr> that contains a td[name="WBS1"] cell
+    const metaRows = Array.from(document.querySelectorAll('td[name="WBS1"]'))
+      .map(cell => cell.closest('tr'))
+      .filter(Boolean);
 
-    // 3. Hour data table — different table whose TDs have name="T_day1" (VP's hour cells)
-    let hourDataTable = null;
-    for (const table of document.querySelectorAll('table')) {
-      if (table === hourHeaderTable || table === metaTable) continue;
-      if (table.querySelector('td[name^="T_day"]')) { hourDataTable = table; break; }
+    // 3. Hour rows — every <tr> that contains a td[name^="T_day"] cell
+    //    De-duplicate by TR identity (a row may have many T_day cells)
+    const hourRowSet = new Set();
+    for (const cell of document.querySelectorAll('td[name^="T_day"]')) {
+      const tr = cell.closest('tr');
+      if (tr) hourRowSet.add(tr);
     }
-    if (!hourDataTable) return null;
+    const hourRows = Array.from(hourRowSet);
 
-    // 4. Readiness check — T_day cells must be in the DOM (Angular renders headers
-    //    before data; returning early causes empty extraction for the first period)
-    const firstDataRow = getDataRows(hourDataTable)[0];
-    if (!firstDataRow || firstDataRow.querySelectorAll('td[name^="T_day"]').length === 0) {
-      return null; // not ready yet — waitFor will retry
+    // Not ready — tables haven't rendered yet
+    if (metaRows.length === 0 || hourRows.length === 0) return null;
+    if (metaRows.length !== hourRows.length) {
+      console.log(`[TS] not ready: metaRows=${metaRows.length} hourRows=${hourRows.length} — retrying`);
+      return null;
     }
 
-    const metaRows  = getDataRows(metaTable);
-    const hourRows  = getDataRows(hourDataTable);
-    console.log(`[TS] tables ready — meta:${metaRows.length} rows, hourData:${hourRows.length} rows, headers:${headers.length}`);
-    return { metaTable, hourHeaderTable, hourDataTable, headers };
+    console.log(`[TS] ready: ${metaRows.length} charge-code rows, ${headers.length} date headers`);
+    return { metaRows, hourRows, headers };
   }
 
   /**
@@ -488,18 +474,14 @@
    * @param {Array}    headers        date headers [{text, …}] from the hour header table
    * @returns {Object[]}
    */
-  function extractFromTwoTables(metaTable, hourDataTable, headers) {
-    const metaRows  = getDataRows(metaTable);
-    const hourRows  = getDataRows(hourDataTable);
-    console.log(`[TS] extractFromTwoTables: meta=${metaRows.length} hourData=${hourRows.length} headers=${headers.length}`);
-
+  function extractFromTwoTables(metaRows, hourRows, headers) {
     const rows = [];
     const len  = Math.min(metaRows.length, hourRows.length);
     for (let i = 0; i < len; i++) {
       const rowData = buildRowFromNamedCells(metaRows[i], hourRows[i], headers);
       if (rowData) rows.push(rowData);
     }
-    console.log(`[TS] extractFromTwoTables: extracted ${rows.length} rows`);
+    console.log(`[TS] extracted ${rows.length} rows from ${len} pairs`);
     return rows;
   }
 
@@ -534,13 +516,16 @@
     if (!project) return null;
 
     // ── Read daily hours via T_dayN name= attributes ───────────────────────────
+    // For historical (read-only) periods VP puts the value in cell text.
+    // For the current editable period VP may use an <input> inside the cell.
     const dailyHours = {};
     for (const cell of hourDataRow.querySelectorAll('td[name^="T_day"],th[name^="T_day"]')) {
       const m = (cell.getAttribute('name') || '').match(/^T_day(\d+)$/);
       if (!m) continue;
       const dayIdx = parseInt(m[1], 10) - 1; // 1-indexed → 0-indexed
       if (dayIdx < 0 || dayIdx >= headers.length) continue;
-      const raw = (cell.innerText || cell.textContent || '').replace(/,/g, '').trim();
+      const inp = cell.querySelector('input');
+      const raw = (inp ? inp.value : (cell.innerText || cell.textContent || '')).replace(/,/g, '').trim();
       const hrs = parseFloat(raw);
       if (!isNaN(hrs) && hrs > 0 && hrs <= 24) {
         dailyHours[headers[dayIdx].text] = hrs;
@@ -985,7 +970,7 @@
     let rows = [];
     try {
       if (twoTable) {
-        rows = extractFromTwoTables(twoTable.metaTable, twoTable.hourDataTable, headers);
+        rows = extractFromTwoTables(twoTable.metaRows, twoTable.hourRows, headers);
       } else {
         const singleTs = findTimesheetTable();
         if (singleTs) rows = extractRows(singleTs.table, headers);
