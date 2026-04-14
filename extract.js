@@ -269,7 +269,48 @@
   }
 
   /**
-   * Find the timesheet table/grid in the DOM.
+   * Find BOTH the metadata table (frozen left columns) and the hour table
+   * (scrollable date columns) in Vantagepoint's split-table layout.
+   *
+   * VP renders timesheets as two separate <table> elements:
+   *   • Metadata table  — project code, name, client, phase, task (no inputs)
+   *   • Hour table      — one column per day, cells contain <input> hour values
+   *
+   * Returns null if either table cannot be found.
+   *
+   * @returns {{ metaTable: Element, hourTable: Element, headers: Array }|null}
+   */
+  function findTimesheetTables() {
+    // Step 1: find the hour table — it has a <tr> with ≥5 date-header cells
+    let hourTable = null;
+    let headers   = [];
+    for (const table of document.querySelectorAll('table')) {
+      const hdrs = collectDateHeaders(table);
+      if (hdrs.length >= 5) { hourTable = table; headers = hdrs; break; }
+    }
+    if (!hourTable || headers.length === 0) return null;
+
+    // Step 2: find the metadata table — a DIFFERENT <table> that contains
+    // at least one project-code-looking cell in a <td>
+    let metaTable = null;
+    for (const table of document.querySelectorAll('table')) {
+      if (table === hourTable) continue;
+      for (const td of table.querySelectorAll('td')) {
+        const t = getText(td).trim();
+        if (PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t)) {
+          metaTable = table;
+          break;
+        }
+      }
+      if (metaTable) break;
+    }
+    if (!metaTable) return null;
+
+    return { metaTable, hourTable, headers };
+  }
+
+  /**
+   * Single-table fallback: find the timesheet table/grid in the DOM.
    * Returns an object { table, headers } where:
    *   - table   is the root element of the timesheet
    *   - headers is an array of { text, el } objects for the date columns
@@ -277,12 +318,10 @@
    * @returns {{ table: Element, headers: Array<{text:string, el:Element}> }|null}
    */
   function findTimesheetTable() {
-    // Strategy 1: find a <table> that contains BOTH date headers AND project codes.
-    // Using the same <table> guarantees that header cellIndex === data cell cellIndex.
+    // Try a <table> that contains BOTH date headers AND project codes.
     for (const table of document.querySelectorAll('table')) {
       const hdrs = collectDateHeaders(table);
       if (hdrs.length < 5) continue;
-      // Verify this table also has project-code rows
       let hasData = false;
       for (const td of table.querySelectorAll('td,th')) {
         const t = getText(td).trim();
@@ -291,14 +330,14 @@
       if (hasData) return { table, headers: hdrs };
     }
 
-    // Strategy 2: any container with a "timesheet" class
+    // Any container with a "timesheet" class
     const tsEl = document.querySelector('[class*="timesheet"],[class*="Timesheet"]');
     if (tsEl) {
       const hdrs = collectDateHeaders(tsEl);
       if (hdrs.length > 0) return { table: tsEl, headers: hdrs };
     }
 
-    // Strategy 3: any div/section with date headers
+    // Any div/section with date headers
     for (const div of document.querySelectorAll('div,section,article')) {
       const hdrs = collectDateHeaders(div);
       if (hdrs.length >= 5) return { table: div, headers: hdrs };
@@ -368,91 +407,66 @@
   }
 
   /**
-   * Given the timesheet root element and its date headers, extract all data rows.
+   * Get data rows (non-header <tr> elements) from a table.
+   * Skips rows that have no <td> cells, are all-<th>, or whose every non-empty
+   * cell matches the date-header pattern (i.e. are header rows).
    *
-   * Vantagepoint renders each project row as a table row (<tr>) or a set of
-   * sibling divs. This function tries <tr>-based extraction first, then falls
-   * back to a heuristic div-based scan.
-   *
-   * @param {Element}                         root
-   * @param {Array<{text:string, el:Element}>} headers
-   * @returns {Array<Object>}  array of row objects in the output format
+   * @param {Element} table
+   * @returns {HTMLTableRowElement[]}
    */
-  function extractRows(root, headers) {
+  function getDataRows(table) {
     const rows = [];
-
-    // ── Try <tr>-based extraction ──────────────────────────────────────────────
-    const trRows = root.querySelectorAll('tr');
-    if (trRows.length > 0) {
-      const tableRows = extractFromTableRows(trRows, headers);
-      if (tableRows.length > 0) return tableRows;
+    for (const tr of table.querySelectorAll('tr')) {
+      const tds = Array.from(tr.querySelectorAll('td'));
+      if (tds.length < 2) continue;
+      // Skip rows where every non-empty cell looks like a date header
+      const nonEmpty = tds.map(td => getText(td).trim()).filter(Boolean);
+      if (nonEmpty.length > 0 && nonEmpty.every(t => DATE_HEADER_RE.test(t))) continue;
+      rows.push(tr);
     }
-
-    // ── Fall back to div/grid-based extraction ─────────────────────────────────
-    const divRows = extractFromDivGrid(root, headers);
-    return divRows;
+    return rows;
   }
 
   /**
-   * Extract row data from a classic HTML <tr>/<td> table structure.
-   * @param {NodeList}                         trList
-   * @param {Array<{text:string, el:Element}>} headers
-   * @returns {Array<Object>}
+   * Extract rows using VP's split-table layout by pairing metadata rows with
+   * hour rows at the same index.
+   *
+   * @param {Element}  metaTable  frozen-left table (project code, name, phase…)
+   * @param {Element}  hourTable  scrollable-right table (one cell per day)
+   * @param {Array}    headers    date headers from collectDateHeaders(hourTable)
+   * @returns {Object[]}
    */
-  function extractFromTableRows(trList, headers) {
-    const rows = [];
-    for (const tr of trList) {
-      const cells = Array.from(tr.querySelectorAll('td,th'));
-      if (cells.length < 2) continue;
+  function extractFromTwoTables(metaTable, hourTable, headers) {
+    const metaRows = getDataRows(metaTable);
+    const hourRows = getDataRows(hourTable);
 
-      const rowData = buildRowFromCells(cells, headers);
+    const rows = [];
+    const len  = Math.min(metaRows.length, hourRows.length);
+    for (let i = 0; i < len; i++) {
+      const metaCells = Array.from(metaRows[i].querySelectorAll('td,th'));
+      const hourCells = Array.from(hourRows[i].querySelectorAll('td,th'));
+      const rowData   = buildRowFromSplitCells(metaCells, hourCells, headers);
       if (rowData) rows.push(rowData);
     }
     return rows;
   }
 
   /**
-   * Extract row data from a CSS-grid or flexbox div structure.
-   * Heuristic: look for sibling rows that share a common parent and
-   * each contain a project code.
-   * @param {Element}                          root
-   * @param {Array<{text:string, el:Element}>} headers
-   * @returns {Array<Object>}
-   */
-  function extractFromDivGrid(root, headers) {
-    const rows = [];
-    // Find elements that look like project codes
-    const allEls = root.querySelectorAll('div,span,td,li');
-    for (const el of allEls) {
-      const t = getText(el).trim();
-      if (!PROJECT_CODE_RE.test(t) && !PROJECT_CODE_ALPHA_RE.test(t)) continue;
-      // Found a project code — try to build a row from its parent
-      const parent = el.parentElement;
-      if (!parent) continue;
-      const siblings = Array.from(parent.querySelectorAll('div,span,td,input'));
-      const rowData = buildRowFromCells(siblings, headers);
-      if (rowData) rows.push(rowData);
-    }
-    return rows;
-  }
-
-  /**
-   * Given an array of cells (from a row), try to identify project metadata
-   * and map hours to date headers.
+   * Build a row object from separate metadata cells and hour cells.
    *
-   * Column order in Vantagepoint is roughly:
-   *   [project code] [project name] [client] [phase] [phase name] [task] [day1] [day2] ... [total]
+   * • metaCells — come from the frozen metadata table row (project code, name, etc.)
+   * • hourCells — come from the scrollable hour table row; hourCells[j] maps
+   *               POSITIONALLY to headers[j], no cellIndex math needed.
    *
-   * @param {Element[]}                        cells
-   * @param {Array<{text:string, el:Element}>} headers
+   * @param {Element[]} metaCells
+   * @param {Element[]} hourCells
+   * @param {Array}     headers
    * @returns {Object|null}
    */
-  function buildRowFromCells(cells, headers) {
-    const texts = cells.map(getText);
+  function buildRowFromSplitCells(metaCells, hourCells, headers) {
+    const texts = metaCells.map(c => getText(c).trim());
 
-    // Must find at least one project-code-looking cell.
-    // Priority 1: standard numeric/alpha project codes (e.g. 22059-01, 26TEC-00)
-    // Priority 2: short non-numeric overhead codes (PTO, Reg Holiday, Huddle, etc.)
+    // Find project code in metadata cells
     let projectIdx = -1;
     for (let i = 0; i < texts.length; i++) {
       if (PROJECT_CODE_RE.test(texts[i]) || PROJECT_CODE_ALPHA_RE.test(texts[i])) {
@@ -460,14 +474,13 @@
         break;
       }
     }
-    // Fallback: accept short plain-text charge labels in the first 3 cells
-    // that look like overhead codes (non-empty, no slash/digits-only, ≤40 chars)
+    // Fallback: short overhead labels (PTO, Reg Holiday, Huddle, etc.)
     if (projectIdx === -1) {
       for (let i = 0; i < Math.min(3, texts.length); i++) {
         const t = texts[i];
         if (t && t.length >= 2 && t.length <= 40
-            && !/^\d+\.?\d*$/.test(t)          // not a pure number
-            && !/\d+\/\d+/.test(t)              // not a date fragment
+            && !/^\d+\.?\d*$/.test(t)
+            && !/\d+\/\d+/.test(t)
             && !/^(total|hours|project|code|description|client|phase|task|type|period|week|pay)/i.test(t)) {
           projectIdx = i;
           break;
@@ -476,47 +489,22 @@
     }
     if (projectIdx === -1) return null;
 
-    const project     = texts[projectIdx] || '';
+    const project     = texts[projectIdx]     || '';
     const projectName = texts[projectIdx + 1] || '';
     const client      = texts[projectIdx + 2] || '';
     const phase       = texts[projectIdx + 3] || '';
     const phaseName   = texts[projectIdx + 4] || '';
     const task        = texts[projectIdx + 5] || '';
 
-    // Build dailyHours: match data cells to date headers by browser-native cellIndex.
-    // Both header cells and data cells from the same <table> share the same cellIndex
-    // values regardless of which <tr> they're in — no offset math needed.
+    // Extract daily hours positionally: hourCells[j] → headers[j].text
     const dailyHours = {};
-    const hasCellIndex = headers.length > 0 && headers[0].cellIndex !== null;
-
-    if (hasCellIndex) {
-      // Build lookup: cellIndex → header text
-      const hdrByCI = new Map(headers.filter(h => h.cellIndex !== null).map(h => [h.cellIndex, h.text]));
-      for (const cell of cells) {
-        const ci = cell.cellIndex;
-        if (ci === undefined || ci === null || ci < 0) continue;
-        const hdrText = hdrByCI.get(ci);
-        if (!hdrText) continue;
-        const input = cell.querySelector && cell.querySelector('input');
-        const raw = (input ? input.value : getText(cell)).replace(/,/g, '').trim();
-        const hrs = parseFloat(raw);
-        if (!isNaN(hrs) && hrs >= 0) dailyHours[hdrText] = hrs;
-      }
-    }
-
-    // Fallback: positional scan from projectIdx+6 (used when cellIndex unavailable)
-    if (Object.keys(dailyHours).length === 0) {
-      const firstHourIdx = projectIdx + 6;
-      let hIdx = 0;
-      for (let i = firstHourIdx; i < cells.length && hIdx < headers.length; i++) {
-        const cell = cells[i];
-        const input = cell.querySelector && cell.querySelector('input');
-        const raw = (input ? input.value : getText(cell)).replace(/,/g, '').trim();
-        const hrs = parseFloat(raw);
-        if (!isNaN(hrs) && hrs >= 0 && hrs <= 24) {
-          dailyHours[headers[hIdx].text] = hrs;
-          hIdx++;
-        }
+    for (let j = 0; j < Math.min(hourCells.length, headers.length); j++) {
+      const cell  = hourCells[j];
+      const input = cell.querySelector && cell.querySelector('input');
+      const raw   = (input ? input.value : getText(cell)).replace(/,/g, '').trim();
+      const hrs   = parseFloat(raw);
+      if (!isNaN(hrs) && hrs > 0 && hrs <= 24) {
+        dailyHours[headers[j].text] = hrs;
       }
     }
 
@@ -527,7 +515,92 @@
       phase,
       phaseName,
       task,
-      dailyHours
+      dailyHours,
+    };
+  }
+
+  /**
+   * Single-table fallback: extract row data from a classic HTML <tr>/<td> structure.
+   * Used when VP's split-table layout is not detected.
+   *
+   * @param {Element}                         root
+   * @param {Array<{text:string, el:Element}>} headers
+   * @returns {Array<Object>}
+   */
+  function extractRows(root, headers) {
+    const trRows = root.querySelectorAll('tr');
+    if (trRows.length > 0) {
+      const rows = [];
+      for (const tr of trRows) {
+        const cells = Array.from(tr.querySelectorAll('td,th'));
+        if (cells.length < 2) continue;
+        const rowData = buildRowFromCellsFallback(cells, headers);
+        if (rowData) rows.push(rowData);
+      }
+      if (rows.length > 0) return rows;
+    }
+    return [];
+  }
+
+  /**
+   * Single-table fallback row builder.
+   * Used only when the two-table approach is unavailable.
+   *
+   * @param {Element[]}                        cells
+   * @param {Array<{text:string, el:Element}>} headers
+   * @returns {Object|null}
+   */
+  function buildRowFromCellsFallback(cells, headers) {
+    const texts = cells.map(c => getText(c).trim());
+
+    let projectIdx = -1;
+    for (let i = 0; i < texts.length; i++) {
+      if (PROJECT_CODE_RE.test(texts[i]) || PROJECT_CODE_ALPHA_RE.test(texts[i])) {
+        projectIdx = i; break;
+      }
+    }
+    if (projectIdx === -1) {
+      for (let i = 0; i < Math.min(3, texts.length); i++) {
+        const t = texts[i];
+        if (t && t.length >= 2 && t.length <= 40
+            && !/^\d+\.?\d*$/.test(t)
+            && !/\d+\/\d+/.test(t)
+            && !/^(total|hours|project|code|description|client|phase|task|type|period|week|pay)/i.test(t)) {
+          projectIdx = i; break;
+        }
+      }
+    }
+    if (projectIdx === -1) return null;
+
+    const project     = texts[projectIdx]     || '';
+    const projectName = texts[projectIdx + 1] || '';
+    const client      = texts[projectIdx + 2] || '';
+    const phase       = texts[projectIdx + 3] || '';
+    const phaseName   = texts[projectIdx + 4] || '';
+    const task        = texts[projectIdx + 5] || '';
+
+    const dailyHours = {};
+    const firstHourIdx = projectIdx + 6;
+    let hIdx = 0;
+    for (let i = firstHourIdx; i < cells.length && hIdx < headers.length; i++) {
+      const cell  = cells[i];
+      const input = cell.querySelector && cell.querySelector('input');
+      const raw   = (input ? input.value : getText(cell)).replace(/,/g, '').trim();
+      const hrs   = parseFloat(raw);
+      if (!isNaN(hrs) && hrs >= 0 && hrs <= 24) {
+        dailyHours[headers[hIdx].text] = hrs;
+        hIdx++;
+      }
+    }
+
+    return {
+      project,
+      projectName: projectName.replace(project, '').trim() || projectName,
+      client,
+      phase,
+      phaseName,
+      task,
+      dailyHours,
     };
   }
 
@@ -830,17 +903,26 @@
    * @returns {Promise<{ periodKey: string, startDate: Date|null, data: Object }|null>}
    */
   async function scrapeCurrentPeriod(employeeCode, expectedEndDate) {
-    // Wait for the date headers to appear — this is our signal that the page has rendered
-    const tableResult = await waitFor(() => {
-      const ts = findTimesheetTable();
-      return (ts && ts.headers.length > 0) ? ts : null;
-    }, 8000, 250);
+    // Wait for date headers to appear — this is our signal that the page has rendered.
+    // We wait for EITHER the two-table layout (preferred) OR the single-table layout.
+    const twoTableResult = await waitFor(() => findTimesheetTables(), 8000, 250);
 
-    if (!tableResult) {
-      return null; // Caller handles the failure
+    // Determine which mode we're in
+    let headers, twoTable = null;
+    if (twoTableResult) {
+      headers  = twoTableResult.headers;
+      twoTable = twoTableResult;
+    } else {
+      // Fall back to single-table detection
+      const singleResult = await waitFor(() => {
+        const ts = findTimesheetTable();
+        return (ts && ts.headers.length > 0) ? ts : null;
+      }, 4000, 250);
+      if (!singleResult) return null;
+      headers = singleResult.headers;
     }
 
-    const { table, headers } = tableResult;
+    if (!headers || headers.length === 0) return null;
 
     // ── Find period label ─────────────────────────────────────────────────────
     let periodLabel = null;
@@ -852,9 +934,8 @@
       if (periodLabel) {
         const m = periodLabel.match(PERIOD_LABEL_RE);
         if (m) {
-          startDate = parseDate(m[1]);
-          endDate   = parseDate(m[2]) || expectedEndDate;
-          // Normalize to M/D/YYYY format (no leading zeros) for the period key
+          startDate   = parseDate(m[1]);
+          endDate     = parseDate(m[2]) || expectedEndDate;
           periodLabel = formatDate(startDate) + ' - ' + formatDate(endDate);
         }
       }
@@ -862,59 +943,22 @@
       console.warn('[TimesheetExtractor] Could not parse period label:', e);
     }
 
-    // If no label found, construct one from the URL-derived end date
     if (!periodLabel) {
       endDate     = expectedEndDate;
-      // Guess start date as 13 days before end (typical biweekly period)
       startDate   = subtractDays(endDate, 13);
       periodLabel = formatDate(startDate) + ' - ' + formatDate(endDate);
     }
 
     // ── Extract rows ──────────────────────────────────────────────────────────
     let rows = [];
-    let _debug = null;
     try {
-      rows = extractRows(table, headers);
-
-      // ── Diagnostic snapshot (first period only) ───────────────────────────
-      // Captures exact DOM structure so column-alignment bugs can be diagnosed
-      // without guessing. Remove once extraction is verified correct.
-      if (!window.__tsDebugCaptured) {
-        window.__tsDebugCaptured = true;
-        try {
-          // Header row: each cell's text and native cellIndex
-          const headerCells = headers.map(h => ({
-            text:      h.text,
-            cellIndex: h.cellIndex,
-            elTag:     h.el ? h.el.tagName : null,
-          }));
-
-          // First data <tr> in the table that has a project code
-          let firstDataRowCells = null;
-          let firstDataRowDailyHours = null;
-          for (const tr of table.querySelectorAll('tr')) {
-            const tds = Array.from(tr.querySelectorAll('td,th'));
-            const hasCode = tds.some(c => {
-              const t = getText(c).trim();
-              return PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t);
-            });
-            if (!hasCode) continue;
-            firstDataRowCells = tds.map(c => ({
-              text:      getText(c).trim().slice(0, 40),
-              cellIndex: c.cellIndex,
-              hasInput:  !!c.querySelector('input'),
-              inputVal:  c.querySelector('input') ? c.querySelector('input').value : null,
-            }));
-            // Also show what buildRowFromCells produces for this row
-            const result = buildRowFromCells(tds, headers);
-            firstDataRowDailyHours = result ? result.dailyHours : null;
-            break;
-          }
-
-          _debug = { headerCells, firstDataRowCells, firstDataRowDailyHours };
-        } catch (de) {
-          _debug = { error: String(de) };
-        }
+      if (twoTable) {
+        // Primary path: VP split-table layout
+        rows = extractFromTwoTables(twoTable.metaTable, twoTable.hourTable, headers);
+      } else {
+        // Fallback path: single combined table
+        const { table } = await waitFor(() => findTimesheetTable(), 0, 0) || {};
+        if (table) rows = extractRows(table, headers);
       }
     } catch (e) {
       console.warn('[TimesheetExtractor] Row extraction error:', e);
@@ -929,8 +973,7 @@
         period:      periodLabel,
         dateHeaders: dateHeaderTexts,
         rows,
-        ...(_debug ? { _debug } : {}),
-      }
+      },
     };
   }
 
