@@ -872,8 +872,50 @@
 
     // ── Extract rows ──────────────────────────────────────────────────────────
     let rows = [];
+    let _debug = null;
     try {
       rows = extractRows(table, headers);
+
+      // ── Diagnostic snapshot (first period only) ───────────────────────────
+      // Captures exact DOM structure so column-alignment bugs can be diagnosed
+      // without guessing. Remove once extraction is verified correct.
+      if (!window.__tsDebugCaptured) {
+        window.__tsDebugCaptured = true;
+        try {
+          // Header row: each cell's text and native cellIndex
+          const headerCells = headers.map(h => ({
+            text:      h.text,
+            cellIndex: h.cellIndex,
+            elTag:     h.el ? h.el.tagName : null,
+          }));
+
+          // First data <tr> in the table that has a project code
+          let firstDataRowCells = null;
+          let firstDataRowDailyHours = null;
+          for (const tr of table.querySelectorAll('tr')) {
+            const tds = Array.from(tr.querySelectorAll('td,th'));
+            const hasCode = tds.some(c => {
+              const t = getText(c).trim();
+              return PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t);
+            });
+            if (!hasCode) continue;
+            firstDataRowCells = tds.map(c => ({
+              text:      getText(c).trim().slice(0, 40),
+              cellIndex: c.cellIndex,
+              hasInput:  !!c.querySelector('input'),
+              inputVal:  c.querySelector('input') ? c.querySelector('input').value : null,
+            }));
+            // Also show what buildRowFromCells produces for this row
+            const result = buildRowFromCells(tds, headers);
+            firstDataRowDailyHours = result ? result.dailyHours : null;
+            break;
+          }
+
+          _debug = { headerCells, firstDataRowCells, firstDataRowDailyHours };
+        } catch (de) {
+          _debug = { error: String(de) };
+        }
+      }
     } catch (e) {
       console.warn('[TimesheetExtractor] Row extraction error:', e);
     }
@@ -887,6 +929,7 @@
         period:      periodLabel,
         dateHeaders: dateHeaderTexts,
         rows,
+        ...(_debug ? { _debug } : {}),
       }
     };
   }
