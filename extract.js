@@ -1007,27 +1007,57 @@
       if (!window.__tsDebugCaptured) {
         window.__tsDebugCaptured = true;
         try {
-          const dumpRow = tds => tds.slice(0, 10).map(c => ({
-            t: (c.innerText || c.textContent || '').trim().slice(0, 25),
-            ci: c.cellIndex,
-            v: c.querySelector('input') ? c.querySelector('input').value : null,
-          }));
+          // ── Helper: dump cell details ─────────────────────────────────────
+          const dumpCell = c => ({
+            t:       (c.innerText || c.textContent || '').trim().slice(0, 30),
+            ci:      c.cellIndex,
+            v:       c.querySelector('input') ? c.querySelector('input').value : null,
+            // All HTML attributes on the TD itself
+            attrs:   Array.from(c.attributes).map(a => a.name + '=' + a.value.slice(0, 40)),
+            // Tag names of direct children
+            kids:    Array.from(c.children).map(k => k.tagName + (k.className ? '.' + String(k.className).split(' ')[0] : '')),
+            // First child's outerHTML (truncated) — reveals Angular/Wijmo structure
+            kidHTML: c.children.length ? c.children[0].outerHTML.slice(0, 200) : null,
+          });
+
+          // ── Summarise all tables ──────────────────────────────────────────
           const allTables = Array.from(document.querySelectorAll('table')).map((tbl, i) => {
-            const allTrs = Array.from(tbl.querySelectorAll('tr'));
+            const allTrs  = Array.from(tbl.querySelectorAll('tr'));
             const dataTrs = allTrs.filter(tr => tr.querySelectorAll('td').length >= 2);
+            const first3  = dataTrs.slice(0, 3).map(tr =>
+              Array.from(tr.querySelectorAll('td,th')).slice(0, 12).map(dumpCell)
+            );
             return {
               i,
-              rows: allTrs.length,
-              dataTrs: dataTrs.length,
-              firstRowCells: dataTrs.length ? dumpRow(Array.from(dataTrs[0].querySelectorAll('td,th'))) : [],
+              rows:       allTrs.length,
+              dataTrs:    dataTrs.length,
+              first3Rows: first3,
               isMetaTable: twoTable ? tbl === twoTable.metaTable : false,
               isHourTable: twoTable ? tbl === twoTable.hourTable : false,
             };
           });
+
+          // ── Probe for Wijmo FlexGrid data ─────────────────────────────────
+          // WijmoJS sets a .control property on the host element of each grid.
+          const wijmoGrids = [];
+          for (const el of document.querySelectorAll('*')) {
+            if (el.control && typeof el.control.rows !== 'undefined') {
+              const cv = el.control.collectionView;
+              wijmoGrids.push({
+                tag:   el.tagName,
+                cls:   String(el.className).slice(0, 60),
+                rows:  el.control.rows.length,
+                cvItems: cv ? cv.items.slice(0, 2).map(it => JSON.stringify(it).slice(0, 200)) : null,
+              });
+              if (wijmoGrids.length >= 4) break; // limit output
+            }
+          }
+
           _debug = {
-            mode: twoTable ? 'two-table' : 'single-table',
-            headers: headers.map(h => h.text),
+            mode:          twoTable ? 'two-table' : 'single-table',
+            headers:       headers.map(h => h.text),
             allTables,
+            wijmoGrids,
             rowsExtracted: rows.length,
           };
           console.log('[TS] _debug:', JSON.stringify(_debug, null, 2));
