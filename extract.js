@@ -236,8 +236,12 @@
   /** Pattern for a date-range period label, e.g. "1/5/2026 - 1/18/2026" */
   const PERIOD_LABEL_RE = /(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})/;
 
-  /** Pattern for a column date header, e.g. "Mon 1/5" or "Mon1/5" */
-  const DATE_HEADER_RE = /^[A-Z][a-z]{2}\s*\d{1,2}\/\d{1,2}$/;
+  /**
+   * Pattern for a column date header, e.g. "Mon 1/5" or "Sat 3/31".
+   * Anchored to REAL day-of-week names to exclude VP columns like "Per 1/31",
+   * "End 1/31", "Tot 1/31", etc. that would otherwise match the looser form.
+   */
+  const DATE_HEADER_RE = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s*\d{1,2}\/\d{1,2}$/;
 
   /** Pattern for a numeric project code, e.g. "22059-01" */
   const PROJECT_CODE_RE = /^\d{5}-\d+$/;
@@ -280,6 +284,25 @@
    *
    * @returns {{ metaTable: Element, hourTable: Element, headers: Array }|null}
    */
+  /**
+   * Return true if `el` or any of its descendants contains a project-code string.
+   * Checks `el.innerText` (catches nested spans/divs), then the value of any
+   * child <input> elements.
+   * @param {Element} el
+   * @returns {boolean}
+   */
+  function cellHasProjectCode(el) {
+    // innerText of the cell itself (includes nested text nodes)
+    const t = (el.innerText || el.textContent || '').trim();
+    if (PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t)) return true;
+    // Also check input values nested inside the cell
+    for (const inp of el.querySelectorAll('input')) {
+      const v = (inp.value || '').trim();
+      if (PROJECT_CODE_RE.test(v) || PROJECT_CODE_ALPHA_RE.test(v)) return true;
+    }
+    return false;
+  }
+
   function findTimesheetTables() {
     // Step 1: find the hour table — it has a <tr> with ≥5 date-header cells
     let hourTable = null;
@@ -288,24 +311,40 @@
       const hdrs = collectDateHeaders(table);
       if (hdrs.length >= 5) { hourTable = table; headers = hdrs; break; }
     }
-    if (!hourTable || headers.length === 0) return null;
+    if (!hourTable || headers.length === 0) {
+      console.log('[TS] findTimesheetTables: no hour table found (no table with ≥5 date headers)');
+      return null;
+    }
+    console.log(`[TS] findTimesheetTables: hour table found, ${headers.length} headers`);
 
     // Step 2: find the metadata table — a DIFFERENT <table> that contains
-    // at least one project-code-looking cell in a <td>
+    // at least one project-code-looking cell
     let metaTable = null;
     for (const table of document.querySelectorAll('table')) {
       if (table === hourTable) continue;
       for (const td of table.querySelectorAll('td')) {
-        const t = getText(td).trim();
-        if (PROJECT_CODE_RE.test(t) || PROJECT_CODE_ALPHA_RE.test(t)) {
-          metaTable = table;
-          break;
-        }
+        if (cellHasProjectCode(td)) { metaTable = table; break; }
       }
       if (metaTable) break;
     }
-    if (!metaTable) return null;
 
+    if (!metaTable) {
+      console.log('[TS] findTimesheetTables: no metadata table found — listing all tables:');
+      let idx = 0;
+      for (const tbl of document.querySelectorAll('table')) {
+        const trs = tbl.querySelectorAll('tr');
+        const firstTds = trs.length > 0
+          ? Array.from(trs[0].querySelectorAll('td,th')).slice(0, 5).map(c => (c.innerText || c.textContent || '').trim().slice(0, 25))
+          : [];
+        console.log(`[TS]   table[${idx}] rows=${trs.length} firstRow=[${firstTds.join(' | ')}]`);
+        idx++;
+      }
+      return null;
+    }
+
+    const metaDataRows = getDataRows(metaTable);
+    const hourDataRows = getDataRows(hourTable);
+    console.log(`[TS] findTimesheetTables: meta table found — metaDataRows=${metaDataRows.length}, hourDataRows=${hourDataRows.length}`);
     return { metaTable, hourTable, headers };
   }
 
@@ -439,6 +478,7 @@
   function extractFromTwoTables(metaTable, hourTable, headers) {
     const metaRows = getDataRows(metaTable);
     const hourRows = getDataRows(hourTable);
+    console.log(`[TS] extractFromTwoTables: metaRows=${metaRows.length}, hourRows=${hourRows.length}, headers=${headers.length}`);
 
     const rows = [];
     const len  = Math.min(metaRows.length, hourRows.length);
@@ -448,6 +488,7 @@
       const rowData   = buildRowFromSplitCells(metaCells, hourCells, headers);
       if (rowData) rows.push(rowData);
     }
+    console.log(`[TS] extractFromTwoTables: extracted ${rows.length} rows`);
     return rows;
   }
 
@@ -951,14 +992,48 @@
 
     // ── Extract rows ──────────────────────────────────────────────────────────
     let rows = [];
+    let _debug = null;
     try {
       if (twoTable) {
-        // Primary path: VP split-table layout
+        console.log(`[TS] scrapeCurrentPeriod: using two-table mode for "${periodLabel}"`);
         rows = extractFromTwoTables(twoTable.metaTable, twoTable.hourTable, headers);
       } else {
-        // Fallback path: single combined table
-        const { table } = await waitFor(() => findTimesheetTable(), 0, 0) || {};
-        if (table) rows = extractRows(table, headers);
+        console.log(`[TS] scrapeCurrentPeriod: using single-table fallback for "${periodLabel}"`);
+        const singleTs = findTimesheetTable();
+        if (singleTs) rows = extractRows(singleTs.table, headers);
+      }
+
+      // Diagnostic snapshot for the first scraped period — remove once verified
+      if (!window.__tsDebugCaptured) {
+        window.__tsDebugCaptured = true;
+        try {
+          const dumpRow = tds => tds.slice(0, 10).map(c => ({
+            t: (c.innerText || c.textContent || '').trim().slice(0, 25),
+            ci: c.cellIndex,
+            v: c.querySelector('input') ? c.querySelector('input').value : null,
+          }));
+          const allTables = Array.from(document.querySelectorAll('table')).map((tbl, i) => {
+            const allTrs = Array.from(tbl.querySelectorAll('tr'));
+            const dataTrs = allTrs.filter(tr => tr.querySelectorAll('td').length >= 2);
+            return {
+              i,
+              rows: allTrs.length,
+              dataTrs: dataTrs.length,
+              firstRowCells: dataTrs.length ? dumpRow(Array.from(dataTrs[0].querySelectorAll('td,th'))) : [],
+              isMetaTable: twoTable ? tbl === twoTable.metaTable : false,
+              isHourTable: twoTable ? tbl === twoTable.hourTable : false,
+            };
+          });
+          _debug = {
+            mode: twoTable ? 'two-table' : 'single-table',
+            headers: headers.map(h => h.text),
+            allTables,
+            rowsExtracted: rows.length,
+          };
+          console.log('[TS] _debug:', JSON.stringify(_debug, null, 2));
+        } catch (de) {
+          _debug = { error: String(de) };
+        }
       }
     } catch (e) {
       console.warn('[TimesheetExtractor] Row extraction error:', e);
@@ -973,6 +1048,7 @@
         period:      periodLabel,
         dateHeaders: dateHeaderTexts,
         rows,
+        ...(_debug ? { _debug } : {}),
       },
     };
   }
