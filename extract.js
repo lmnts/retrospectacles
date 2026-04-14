@@ -939,7 +939,6 @@
     }
 
     if (!headers || headers.length === 0) return null;
-    console.log(`[TS] period "${periodLabel}" — ${headers.length} date headers, mode: ${twoTable ? 'VP named-cell' : 'single-table fallback'}`);
 
     // ── Find period label ─────────────────────────────────────────────────────
     let periodLabel = null;
