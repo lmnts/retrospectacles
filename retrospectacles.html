@@ -453,6 +453,7 @@ body{
           </div>
           <div style="height:50vh;min-height:180px;overflow:auto"><canvas id="c-daily" style="display:block"></canvas></div>
           <div id="daily-legend" style="padding:4px 10px 2px;display:flex;flex-wrap:wrap;gap:3px 10px;flex-shrink:0"></div>
+          <div id="daily-stats" style="padding:3px 12px 5px;font-size:10px;color:var(--b6);border-top:1px solid var(--b1);line-height:1.8;flex-shrink:0"></div>
           <div class="chart-note" id="note-daily"></div>
         </div>
 
@@ -1898,6 +1899,55 @@ function buildDaily(){
   maxH=maxH||1;
   const scale=(MAX_H*0.9)/maxH;
 
+  // ── Weekly stats ──────────────────────────────────────────────────────────
+  const wkTotals={};
+  days.forEach(day=>{
+    if(!dData[day])return;
+    const d=new Date(day+'T12:00:00');
+    const dow=d.getDay();// 0=Sun
+    const back=dow===0?6:dow-1;// days to last Monday
+    const mon=new Date(d);mon.setDate(mon.getDate()-back);
+    const wk=mon.toISOString().slice(0,10);
+    const tot=Object.values(dData[day]).reduce((s,v)=>s+v,0);
+    wkTotals[wk]=(wkTotals[wk]||0)+tot;
+  });
+  const activeWks=Object.keys(wkTotals).filter(k=>wkTotals[k]>0).sort();
+  const totalWkHrs=activeWks.reduce((s,k)=>s+wkTotals[k],0);
+  const avgHPW=activeWks.length?totalWkHrs/activeWks.length:0;
+  let totalOT=0;
+  activeWks.forEach(k=>{totalOT+=Math.max(0,wkTotals[k]-40);});
+  // Top 3 peak weeks (non-overlapping — just highest totals)
+  const top3Wks=[...activeWks].sort((a,b)=>wkTotals[b]-wkTotals[a]).slice(0,3);
+  // Rolling sums for 2-week and 3-week windows over all calendar weeks (gaps = 0h)
+  let best2={h:0,wk:''},best3={h:0,wk:''};
+  if(activeWks.length>=2){
+    // Build dense array of ALL calendar weeks between first and last active week
+    const allWks=[];
+    const wkEnd=new Date(activeWks[activeWks.length-1]+'T12:00:00');
+    for(const cur=new Date(activeWks[0]+'T12:00:00');cur<=wkEnd;cur.setDate(cur.getDate()+7)){
+      const k=cur.toISOString().slice(0,10);
+      allWks.push({wk:k,h:wkTotals[k]||0});
+    }
+    for(let i=0;i<allWks.length;i++){
+      if(i+1<allWks.length){const s=allWks[i].h+allWks[i+1].h;if(s>best2.h)best2={h:s,wk:allWks[i].wk};}
+      if(i+2<allWks.length){const s=allWks[i].h+allWks[i+1].h+allWks[i+2].h;if(s>best3.h)best3={h:s,wk:allWks[i].wk};}
+    }
+  }
+  // Render stats panel
+  const statsEl=document.getElementById('daily-stats');
+  if(statsEl){
+    const fmtWk=wk=>{const d=new Date(wk+'T12:00:00');return d.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'});};
+    const fmtWkShort=wk=>{const d=new Date(wk+'T12:00:00');return d.toLocaleString('en-US',{month:'short',year:'numeric'});};
+    const nums=['①','②','③'];
+    const peakRows=top3Wks.map((wk,i)=>`<span style="color:${C.b8}">${nums[i]} ${Math.round(wkTotals[wk])}h</span> <span style="color:${C.b5}">wk of ${fmtWk(wk)}</span>`).join('&ensp;·&ensp;');
+    statsEl.innerHTML=
+      `<span style="color:${C.b7};font-weight:600">${avgHPW.toFixed(1)}h</span><span style="color:${C.b5}"> avg / active week&emsp;</span>`+
+      `<span style="color:${C.orange};font-weight:600">${Math.round(totalOT).toLocaleString()}h</span><span style="color:${C.b5}"> overtime (above 40h/wk)&emsp;</span>`+
+      (best2.h>0?`<span style="color:${C.b7};font-weight:600">${Math.round(best2.h)}h</span><span style="color:${C.b5}"> peak 2-wk (${fmtWkShort(best2.wk)})&emsp;</span>`:'') +
+      (best3.h>0?`<span style="color:${C.b7};font-weight:600">${Math.round(best3.h)}h</span><span style="color:${C.b5}"> peak 3-wk (${fmtWkShort(best3.wk)})&emsp;</span>`:'') +
+      `<br><span style="color:${C.b5}">peak weeks: </span>`+peakRows;
+  }
+
   // Store draw params on canvas for redraw on hover
   canvas._dailyData={dData,topKeys,days,PW,HDR,MAX_H,scale};
   canvas._dailyHoverGk=null;
@@ -1908,14 +1958,22 @@ function buildDaily(){
     // Y-axis
     {const tStep=maxH<=8?2:maxH<=20?4:maxH<=40?8:Math.ceil(maxH/5/5)*5;
     const tks=[];for(let t=tStep;t<=maxH;t+=tStep)tks.push(t);
-    ctx.save();ctx.setLineDash([2,3]);
+    if(!tks.includes(8)&&8<=maxH)tks.push(8);
+    tks.sort((a,b)=>a-b);
+    ctx.save();
     tks.forEach(t=>{
       const y=HDR+MAX_H-Math.round(t*scale);if(y<HDR||y>HDR+MAX_H)return;
-      ctx.strokeStyle=C.b1+'88';ctx.lineWidth=0.5;
+      const is8=t===8;
+      ctx.setLineDash(is8?[]:[2,3]);
+      ctx.strokeStyle=is8?(C.orange+'55'):(C.b1+'88');
+      ctx.lineWidth=is8?0.9:0.5;
       ctx.beginPath();ctx.moveTo(LAX,y);ctx.lineTo(W,y);ctx.stroke();
-      ctx.fillStyle=C.b6;ctx.font='7px -apple-system,sans-serif';ctx.textAlign='right';
+      ctx.fillStyle=is8?(C.orange+'cc'):C.b6;
+      ctx.font=(is8?'600 ':'')+'7px -apple-system,sans-serif';
+      ctx.textAlign='right';
       ctx.fillText(t+'h',LAX-2,y+2.5);
-    });ctx.setLineDash([]);ctx.restore();}
+    });
+    ctx.setLineDash([]);ctx.restore();}
     ctx.strokeStyle=C.b2;ctx.lineWidth=0.5;
     ctx.beginPath();ctx.moveTo(LAX,HDR);ctx.lineTo(LAX,HDR+MAX_H);ctx.stroke();
     let _lastYr2='',_lastMo2='';
