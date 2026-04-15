@@ -2001,8 +2001,16 @@ function buildDaily(){
   const activeWks=Object.keys(wkTotals).filter(k=>wkTotals[k]>0).sort();
   const totalWkHrs=activeWks.reduce((s,k)=>s+wkTotals[k],0);
   const avgHPW=activeWks.length?totalWkHrs/activeWks.length:0;
-  let totalOT=0;
-  activeWks.forEach(k=>{totalOT+=Math.max(0,wkTotals[k]-40);});
+  // Daily OT: M-F hours above 8h; ALL weekend hours count as OT
+  // (aligned with the 8h visual marker — used in both stats panel and hover tooltip)
+  let totalOT_hrs=0,totalOT_days=0;
+  days.forEach(d=>{
+    if(!dData[d])return;
+    const tot=Object.values(dData[d]).reduce((s,v)=>s+v,0);if(!tot)return;
+    const dow=new Date(d+'T12:00:00').getDay(); // 0=Sun, 6=Sat
+    const ot=dow===0||dow===6?tot:Math.max(0,tot-8);
+    if(ot>0){totalOT_hrs+=ot;totalOT_days++;}
+  });
   // Top 3 peak weeks (non-overlapping — just highest totals)
   const top3Wks=[...activeWks].sort((a,b)=>wkTotals[b]-wkTotals[a]).slice(0,3);
   // Rolling sums for 2-week and 3-week windows over all calendar weeks (gaps = 0h)
@@ -2029,7 +2037,7 @@ function buildDaily(){
     const peakRows=top3Wks.map((wk,i)=>`<span style="color:${C.b8}">${nums[i]} ${Math.round(wkTotals[wk])}h</span> <span style="color:${C.b5}">wk of ${fmtWk(wk)}</span>`).join('&ensp;·&ensp;');
     statsEl.innerHTML=
       `<span style="color:${C.b7};font-weight:600">${avgHPW.toFixed(1)}h</span><span style="color:${C.b5}"> avg / active week&emsp;</span>`+
-      `<span style="color:${C.orange};font-weight:600">${Math.round(totalOT).toLocaleString()}h</span><span style="color:${C.b5}"> overtime (above 40h/wk)&emsp;</span>`+
+      `<span style="color:${C.orange};font-weight:600">${Math.round(totalOT_hrs).toLocaleString()}h</span><span style="color:${C.b5}"> overtime (M–F &gt;8h · all wknd hrs)&emsp;</span>`+
       (best2.h>0?`<span style="color:${C.b7};font-weight:600">${Math.round(best2.h)}h</span><span style="color:${C.b5}"> peak 2-wk (${fmtWkShort(best2.wk)})&emsp;</span>`:'') +
       (best3.h>0?`<span style="color:${C.b7};font-weight:600">${Math.round(best3.h)}h</span><span style="color:${C.b5}"> peak 3-wk (${fmtWkShort(best3.wk)})&emsp;</span>`:'') +
       `<br><span style="color:${C.b5}">peak weeks: </span>`+peakRows;
@@ -2137,18 +2145,14 @@ function buildDaily(){
     const y8line=HDR+MAX_H-Math.round(8*scale);
     if(Math.abs(my-y8line)<=6){
       if(canvas._dailyHoverGk!=='__8h'){canvas._dailyHoverGk='__8h';_drawDailyFrame('__8h');}
-      // Tooltip: daily OT summary across visible range
-      let otDays=0,otHrs=0;
-      days.forEach(d=>{
-        if(!dData[d])return;
-        const tot=Object.values(dData[d]).reduce((s,v)=>s+v,0);
-        if(tot>8){otDays++;otHrs+=tot-8;}
-      });
+      // Tooltip: use pre-computed daily OT (same values as stats panel below chart)
+      const _totHrs=days.reduce((s,d)=>s+(dData[d]?Object.values(dData[d]).reduce((a,v)=>a+v,0):0),0);
       showTip(src,
         `<div class="td" style="color:${C.orange}">above 8h threshold</div>`+
-        `<div class="tr"><span style="flex:1">Days over 8h</span><span class="th">${otDays.toLocaleString()}</span></div>`+
-        `<div class="tr"><span style="flex:1">Total OT hours</span><span class="th">${Math.round(otHrs).toLocaleString()}h</span></div>`+
-        `<div class="tr"><span style="flex:1">OT as % of career</span><span class="th">${(otHrs/Math.max(days.reduce((s,d)=>s+(dData[d]?Object.values(dData[d]).reduce((a,v)=>a+v,0):0),0),1)*100).toFixed(1)}%</span></div>`
+        `<div class="tr"><span style="flex:1">Days with OT</span><span class="th">${totalOT_days.toLocaleString()}</span></div>`+
+        `<div class="tr"><span style="flex:1">OT hours</span><span class="th">${Math.round(totalOT_hrs).toLocaleString()}h</span></div>`+
+        `<div class="tr"><span style="flex:1">OT as % of total</span><span class="th">${(_totHrs>0?(totalOT_hrs/_totHrs*100).toFixed(1):'0.0')}%</span></div>`+
+        `<div class="tr" style="font-size:9px;opacity:.7"><span>M–F &gt;8h · all weekend hrs</span></div>`
       );
       return;
     }
