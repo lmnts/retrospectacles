@@ -453,7 +453,7 @@ body{
           </div>
           <div style="height:50vh;min-height:180px;overflow:auto"><canvas id="c-daily" style="display:block"></canvas></div>
           <div id="daily-legend" style="padding:4px 10px 2px;display:flex;flex-wrap:wrap;gap:3px 10px;flex-shrink:0"></div>
-          <div id="daily-stats" style="padding:3px 12px 5px;font-size:10px;color:var(--b6);border-top:1px solid var(--b1);line-height:1.8;flex-shrink:0"></div>
+          <div id="daily-stats" style="padding:3px 12px 5px;font-size:15px;color:var(--b6);border-top:1px solid var(--b1);line-height:1.8;flex-shrink:0"></div>
           <div class="chart-note" id="note-daily"></div>
         </div>
 
@@ -547,6 +547,8 @@ const GRP_NAMES={TEC:'Tech Studio',PRC:'Practice Management',BD:'Business Develo
 // Special merged group for non-TEC overhead codes
 const OV_STUDIOS_GK='OV:__STUDIOS';
 const OV_PTO_GK='OV:__PTO';
+const OV_PURSUIT_GK='OV:__PURSUIT'; // Pursuits, proposals, BD
+const OV_MKTG_GK='OV:__MKTG';      // Marketing, communications
 
 function getGroupKey(meta){
   if(!meta)return '??';
@@ -562,7 +564,26 @@ function getGroupKey(meta){
   return 'PJ:'+code;
 }
 
-// For Monthly Mix: merge all OV:* (except OV:TEC) into one bucket
+// Keyword helpers for overhead sub-classification
+function _isPursuit(nm,gk){
+  return nm.includes('pursuit')||nm.includes('proposal')||nm.includes('rfp')||
+         nm.includes('rfq')||nm.includes('go/no')||nm.includes('go-no')||
+         nm.includes(' bid ')||nm.includes('competition')||nm.includes('contest')||
+         nm.includes('interview')||nm.includes('preconstruction')||nm.includes('pre-construction')||
+         nm.includes('selection')||nm.includes('shortlist')||nm.includes('short list')||
+         nm.includes('fee proposal')||nm.includes('business dev')||
+         gk==='OV:BD'||gk==='OV:PUR'||gk==='OV:PD'||gk==='OV:PURSUIT';
+}
+function _isMktg(nm,gk){
+  return nm.includes('marketing')||nm.includes('communicat')||nm.includes('branding')||
+         nm.includes('social media')||nm.includes('advertising')||nm.includes('outreach')||
+         nm.includes('photography')||nm.includes('portfolio')||nm.includes('awards')||
+         nm.includes('publication')||nm.includes('editorial')||nm.includes('newsletter')||
+         nm.includes('press release')||nm.includes(' pr ')||nm.includes('website')||
+         gk==='OV:MK'||gk==='OV:MKTG'||gk==='OV:COMM'||gk==='OV:PR';
+}
+
+// For Monthly Mix: merge all OV:* (except OV:TEC) into categorized buckets
 function mixGroupKey(meta){
   const gk=getGroupKey(meta);
   if(gk==='OV:TEC')return gk;
@@ -571,6 +592,8 @@ function mixGroupKey(meta){
     if(nm.includes('pto')||nm.includes('holiday')||nm.includes('sick')||
        nm.includes('leave')||nm.includes('vacation')||nm.includes('flex'))
       return OV_PTO_GK;
+    if(_isPursuit(nm,gk))return OV_PURSUIT_GK;
+    if(_isMktg(nm,gk))return OV_MKTG_GK;
     return OV_STUDIOS_GK;
   }
   return gk;
@@ -618,7 +641,10 @@ function applyBrandColors(projectMeta){
 }
 
 function getGroupInfo(gk){
+  if(gk===OV_PURSUIT_GK){const col=customColors[gk]||defaultColors[gk]||C.purple;return{name:'Pursuits & BD',color:col,isBillable:false,client:''};}
+  if(gk===OV_MKTG_GK){const col=customColors[gk]||defaultColors[gk]||C.mag;return{name:'Marketing',color:col,isBillable:false,client:''};}
   if(gk===OV_STUDIOS_GK){const col=customColors[gk]||defaultColors[gk]||C.b5;return{name:'Studio Overhead',color:col,isBillable:false,client:''};}
+
   if(gk===OV_PTO_GK){const col=customColors[gk]||defaultColors[gk]||C.yellow;return{name:'Holiday / PTO',color:col,isBillable:false,client:''};}
 
   if(gk.startsWith('OV:')){
@@ -697,7 +723,12 @@ function processData(raw){
       for(const[hdr,hrs] of Object.entries(row.dailyHours||{})){
         const h=parseFloat(hrs);if(!h||h<=0)continue;
         const dp=hdr.replace(/^[A-Za-z]+\s*/,''),[ms,ds]=dp.split('/');
+        if(!ms||!ds)continue;
         const iso=`${sy}-${ms.padStart(2,'0')}-${ds.padStart(2,'0')}`;
+        // Guard: skip entries with invalid or implausibly early/late years
+        // (handles bad period labels, pre-Deltek historical imports, pagination edge cases)
+        const yr=parseInt(iso.slice(0,4));
+        if(isNaN(yr)||yr<1985||yr>2040)continue;
         entries.push({date:iso,key,hours:h});
         m.totalHours+=h;if(iso<m.firstDate)m.firstDate=iso;if(iso>m.lastDate)m.lastDate=iso;
         if(!daily.has(iso))daily.set(iso,new Map());
@@ -1149,11 +1180,11 @@ function buildAnnual(){
 // ─── Career Arc ───────────────────────────────────────────────────────────────
 function buildArc(){
   const entries=getFiltered();
-  // Aggregate hours by month (YYYY-MM) into four buckets
+  // Aggregate hours by month (YYYY-MM) into five buckets
   const mData={};
   for(const e of entries){
     const mo=e.date.slice(0,7);
-    if(!mData[mo])mData[mo]={bill:0,tec:0,ov:0,pto:0};
+    if(!mData[mo])mData[mo]={bill:0,tec:0,pur:0,ov:0,pto:0};
     const m=S.projectMeta.get(e.key);if(!m)continue;
     const gk=getGroupKey(m);
     const nm=(m.projectName||'').toLowerCase();
@@ -1165,8 +1196,10 @@ function buildArc(){
                   nm.includes('tech')||nm.includes('r&d')||nm.includes('research')||
                   nm.includes('vdc')||nm.includes('revit')||nm.includes('bim')||
                   nm.includes('computational')||nm.includes('parametric');
+      const isPur=_isPursuit(nm,gk)||_isMktg(nm,gk);
       if(isPto)mData[mo].pto+=e.hours;
       else if(isTec)mData[mo].tec+=e.hours;
+      else if(isPur)mData[mo].pur+=e.hours;
       else mData[mo].ov+=e.hours;
     } else {
       mData[mo].bill+=e.hours;
@@ -1175,7 +1208,7 @@ function buildArc(){
   const months=Object.keys(mData).sort();
   // 3-month centred rolling average of utilization (excl. PTO from denominator)
   const rawUtil=months.map(mo=>{
-    const d=mData[mo];const tot=d.bill+d.tec+d.ov;
+    const d=mData[mo];const tot=d.bill+d.tec+d.pur+d.ov;
     return tot>0?d.bill/tot*100:null;
   });
   const WIN=3;
@@ -1186,10 +1219,11 @@ function buildArc(){
   });
   // Arc dataset definitions — order must match datasets array below
   const ARC_DS=[
-    {key:'bill', label:'Billable',        color:C.b3, on:'77'},
-    {key:'tec',  label:'Tech Studio',     color:C.green, on:'cc'},
+    {key:'bill', label:'Billable',        color:C.b3,     on:'77'},
+    {key:'tec',  label:'Tech Studio',     color:C.green,  on:'cc'},
+    {key:'pur',  label:'Pursuits & BD',   color:C.purple, on:'bb'},
     {key:'ov',   label:'Studio Overhead', color:C.orange, on:'bb'},
-    {key:'pto',  label:'PTO / Holiday',   color:C.blue, on:'99'},
+    {key:'pto',  label:'PTO / Holiday',   color:C.blue,   on:'99'},
   ];
   const el=document.getElementById('c-arc');if(!el)return;
   if(el._arcMove)el.removeEventListener('mousemove',el._arcMove);
@@ -1454,9 +1488,11 @@ function buildMix(){
     mData[ym][gk]=(mData[ym][gk]||0)+e.hours;
     gTot[gk]=(gTot[gk]||0)+e.hours;
   }
-  // All months in range, preserving gaps (zero-hour months show the break)
+  // All months in range, clamped to actual data bounds
   const months=[];
-  for(let y=F.yearMin;y<=F.yearMax;y++){
+  const _mxMin=Math.max(F.yearMin,parseInt((S.minDate||'1990-01-01').slice(0,4)));
+  const _mxMax=Math.min(F.yearMax,parseInt((S.maxDate||'2040-12-31').slice(0,4)));
+  for(let y=_mxMin;y<=_mxMax&&(_mxMax-_mxMin)<80;y++){
     for(let mo=1;mo<=12;mo++) months.push(`${y}-${String(mo).padStart(2,'0')}`);
   }
 
@@ -1856,13 +1892,17 @@ function buildDaily(){
     .sort((a,b)=>(gFirst[a]||'9999').localeCompare(gFirst[b]||'9999'));
 
   const days=[];
-  const d0=new Date(F.yearMin+'-01-01T00:00:00'),d1=new Date(F.yearMax+'-12-31T00:00:00');
+  // Clamp range to actual data bounds to prevent runaway loops from bad year values
+  const _yMin=Math.max(F.yearMin,parseInt((S.minDate||'1990-01-01').slice(0,4)));
+  const _yMax=Math.min(F.yearMax,parseInt((S.maxDate||'2040-12-31').slice(0,4)));
+  if(isNaN(_yMin)||isNaN(_yMax)||_yMax-_yMin>60){return;} // safety bail-out
+  const d0=new Date(_yMin+'-01-01T00:00:00'),d1=new Date(_yMax+'-12-31T00:00:00');
   for(let d=new Date(d0);d<=d1;d.setDate(d.getDate()+1))days.push(d.toISOString().slice(0,10));
 
   // zoom=1 means fit all days to container width; zoom>1 multiplies
   const container=document.getElementById('c-daily').parentElement;
   const availW=Math.max(200,container.clientWidth||800);
-  const estDays=(F.yearMax-F.yearMin+1)*365;
+  const estDays=(_yMax-_yMin+1)*365;
   const fitPW=availW/Math.max(estDays,1);
   const PW=zoom===1?fitPW:zoom;
   const LAX=32;
