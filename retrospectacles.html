@@ -588,8 +588,12 @@ function _isMktg(nm,gk){
 function mixGroupKey(meta){
   const gk=getGroupKey(meta);
   if(gk==='OV:TEC')return gk;
+  const nm=(meta.projectName||'').toLowerCase();
+  // Route PJ-coded personal entries (holiday variants, PTO, sick etc.) to PTO bucket
+  if(meta.category==='personal'&&(nm.includes('holiday')||nm.includes('pto')||
+     nm.includes('sick')||nm.includes('leave')||nm.includes('vacation')))
+    return OV_PTO_GK;
   if(gk.startsWith('OV:')){
-    const nm=(meta.projectName||'').toLowerCase();
     if(nm.includes('pto')||nm.includes('holiday')||nm.includes('sick')||
        nm.includes('leave')||nm.includes('vacation')||nm.includes('flex'))
       return OV_PTO_GK;
@@ -683,7 +687,7 @@ function getGroupInfo(gk){
 }
 
 // Personal group keys to exclude from Gantt and similar views
-const PERSONAL_GKS=new Set(['PJ:PTO','PJ:Sick','PJ:Huddle','PJ:Reg Holiday','PJ:Flex Holiday','PJ:Cont Educ']);
+const PERSONAL_GKS=new Set(['PJ:PTO','PJ:Sick','PJ:Huddle','PJ:Holiday','PJ:Reg Holiday','PJ:Flex Holiday','PJ:Cont Educ']);
 
 // ══════════════════════════════════════════════
 // STATE
@@ -715,7 +719,7 @@ function processData(raw){
         const gk='PJ:'+row.project;
         if(!gkPalIdx.has(gk))gkPalIdx.set(gk,palIdx++);
         meta.set(key,{key,project:row.project,
-          projectName:(row.projectName||row.project).replace(/^z_/,''),
+          projectName:(()=>{const n=(row.projectName||row.project).replace(/^z_/,'');return/^(reg(ular)?\s+holiday|flex\s+holiday)$/i.test(n.trim())?'Holiday':n;})(),
           client:row.client||'',phase:row.phase||'',phaseName:row.phaseName||'',task:row.task||'',
           category:cat,isBillable:cat==='billable',color:pc(key),
           totalHours:0,firstDate:'9999',lastDate:'0000'});
